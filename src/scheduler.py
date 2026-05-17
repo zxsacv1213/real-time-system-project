@@ -50,7 +50,6 @@ def find_project_root() -> Path:
         return script_dir.parent
     return script_dir
 
-
 PROJECT_ROOT = find_project_root()
 INPUT_DIR = PROJECT_ROOT / "input"
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -116,6 +115,44 @@ def optional_existing(paths: List[str | Path]) -> Optional[Path]:
 # ============================================================
 # Input loading
 # ============================================================
+def convert_jobs_format(raw_data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    將以 Dict 形式儲存的任務資料（例如原本 JSON 中的 sporadic 或 aperiodic）
+    轉換為標準的 List[Dict] 格式，並確保每個任務內部都包含正確的 'job_id'。
+    """
+    converted_result = {}
+    
+    # 遍歷外部的所有任務類型，例如 "sporadic", "aperiodic" 等
+    for task_type, tasks_content in raw_data.items():
+        
+        # 情況一：如果任務內容是字典格式 {"s1": {...}, "s2": {...}}
+        if isinstance(tasks_content, dict):
+            task_list = []
+            for key, job_detail in tasks_content.items():
+                # 複製一份資料，避免修改到原本的 dict
+                updated_job = job_detail.copy()
+                
+                # 如果內部沒有 job_id 欄位，或者 job_id 與外層的 key 不符，自動校正
+                if "job_id" not in updated_job or updated_job["job_id"] != key:
+                    updated_job["job_id"] = key
+                
+                task_list.append(updated_job)
+            
+            # 依據 job_id 排序（選用，讓輸出比較整齊）
+            task_list.sort(key=lambda x: x["job_id"])
+            converted_result[task_type] = task_list
+            
+        # 情況二：如果原本就已經是串列格式了，直接保留
+        elif isinstance(tasks_content, list):
+            converted_result[task_type] = tasks_content
+        
+        # 其他情況（防呆）
+        else:
+            converted_result[task_type] = tasks_content
+
+    return converted_result
+
+
 
 def load_inputs() -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Load required Level-1 inputs.
@@ -153,7 +190,8 @@ def load_demo_jobs() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         "demo_jobs.json",
     ])
     if demo_path is not None:
-        data = load_json(demo_path)
+        data = convert_jobs_format(load_json(demo_path))
+        ###data = load_json(demo_path)
         return data.get("sporadic", []), data.get("aperiodic", [])
 
     sporadic: Optional[List[Dict[str, Any]]] = None
@@ -165,7 +203,7 @@ def load_demo_jobs() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         "sporadic_jobs.json",
     ])
     if sporadic_path is not None:
-        data = load_json(sporadic_path)
+        data = convert_jobs_format[load_json(sporadic_path)]
         sporadic = data.get("sporadic", data) if isinstance(data, dict) else data
 
     aperiodic_path = optional_existing([
@@ -179,6 +217,7 @@ def load_demo_jobs() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
     if sporadic is None:
         # 4~7 jobs; e=1~3; w=5~20. Deterministic so the output is reproducible.
+        
         sporadic = [
             {"job_id": "s1", "r": 10, "e": 2, "d": 5, "w": 12, "preempt": 1},
             {"job_id": "s2", "r": 18, "e": 3, "d": 6, "w": 18, "preempt": 0},
@@ -186,6 +225,8 @@ def load_demo_jobs() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
             {"job_id": "s4", "r": 46, "e": 2, "d": 5, "w": 10, "preempt": 1},
             {"job_id": "s5", "r": 64, "e": 2, "d": 4, "w": 16, "preempt": 0},
         ]
+        
+        
 
     if aperiodic is None:
         # 7~13 jobs; e=1~4; w=5~15. Soft-deadline jobs.
@@ -313,12 +354,12 @@ def validate_periodic_task_set(periodic_tasks: Dict[str, Dict[str, Any]], frame_
 
 
 def release_times(r: int, p: int, horizon: int) -> List[int]:
-    out = []
-    cur = r
-    while cur <= horizon:
-        out.append(cur)
-        cur += p
-    return out
+    out = []         # 1. 建立一個空清單，準備用來裝所有的釋放時間點
+    cur = r          # 2. 將「當前時間指標 (cur)」設定為第一次釋放的時間點
+    while cur <= horizon:  # 3. 只要當前時間還沒超過我們規定的總時間上限：
+        out.append(cur)    #    - 就把這個時間點記錄到清單裡
+        cur += p           #    - 然後把時間指標往後推「一個週期 (p)」
+    return out       # 4. 時間超出了上限，結束迴圈，回傳整份時間清單
 
 
 # ============================================================
